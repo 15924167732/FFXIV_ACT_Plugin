@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFXIV Combat Dashboard</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .dashboard {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .stat-card h3 {
+            margin: 0 0 10px 0;
+            color: #4fc3f7;
+            font-size: 1.2em;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .dps-bar {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            height: 20px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .dps-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4fc3f7, #29b6f6);
+            transition: width 0.3s ease;
+            border-radius: 10px;
+        }
+        
+        .events-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .event-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 10px;
+            margin: 5px 0;
+            border-left: 4px solid #4fc3f7;
+        }
+        
+        .event-damage {
+            border-left-color: #f44336;
+        }
+        
+        .event-heal {
+            border-left-color: #4caf50;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-connected {
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-disconnected {
+            background: #f44336;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .chart-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            margin: 20px 0;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            background: rgba(79, 195, 247, 0.3);
+            border: 1px solid #4fc3f7;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn:hover {
+            background: rgba(79, 195, 247, 0.5);
+            transform: translateY(-2px);
+        }
+        
+        .btn.active {
+            background: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // 自定义Hook：实时战斗数据
+        function useLiveCombatData() {
+            const [stats, setStats] = useState({});
+            const [events, setEvents] = useState([]);
+            const [isConnected, setIsConnected] = useState(false);
+            const [currentEncounter, setCurrentEncounter] = useState(null);
+            const wsRef = useRef(null);
+
+            useEffect(() => {
+                // 连接WebSocket
+                const connectWebSocket = () => {
+                    const ws = new WebSocket('ws://localhost:8000/ws/live');
+                    wsRef.current = ws;
+
+                    ws.onopen = () => {
+                        console.log('WebSocket连接成功');
+                        setIsConnected(true);
+                    };
+
+                    ws.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            setEvents(prev => [data, ...prev.slice(0, 99)]);
+                        } catch (error) {
+                            console.error('解析WebSocket消息失败:', error);
+                        }
+                    };
+
+                    ws.onclose = () => {
+                        console.log('WebSocket连接断开');
+                        setIsConnected(false);
+                        // 重连逻辑
+                        setTimeout(connectWebSocket, 3000);
+                    };
+
+                    ws.onerror = (error) => {
+                        console.error('WebSocket错误:', error);
+                        setIsConnected(false);
+                    };
+                };
+
+                connectWebSocket();
+
+                // 定期获取统计数据
+                const fetchStats = async () => {
+                    try {
+                        const response = await fetch('/api/v1/combat/live/stats');
+                        if (response.ok) {
+                            const newStats = await response.json();
+                            setStats(newStats);
+                        }
+                    } catch (error) {
+                        console.error('获取统计数据失败:', error);
+                    }
+                };
+
+                // 获取当前战斗信息
+                const fetchCurrentEncounter = async () => {
+                    try {
+                        const response = await fetch('/api/v1/combat/current');
+                        if (response.ok) {
+                            const encounter = await response.json();
+                            setCurrentEncounter(encounter);
+                        }
+                    } catch (error) {
+                        console.error('获取当前战斗失败:', error);
+                    }
+                };
+
+                const statsInterval = setInterval(fetchStats, 1000);
+                const encounterInterval = setInterval(fetchCurrentEncounter, 5000);
+
+                // 初始加载
+                fetchStats();
+                fetchCurrentEncounter();
+
+                return () => {
+                    if (wsRef.current) {
+                        wsRef.current.close();
+                    }
+                    clearInterval(statsInterval);
+                    clearInterval(encounterInterval);
+                };
+            }, []);
+
+            return { stats, events, isConnected, currentEncounter };
+        }
+
+        // 统计卡片组件
+        function StatCard({ title, value, unit, color, maxValue }) {
+            const percentage = maxValue ? (value / maxValue) * 100 : 0;
+            
+            return (
+                <div className="stat-card">
+                    <h3>{title}</h3>
+                    <div className="stat-value" style={{ color: color }}>
+                        {typeof value === 'number' ? value.toLocaleString() : value}
+                        {unit && <span style={{ fontSize: '0.5em', marginLeft: '5px' }}>{unit}</span>}
+                    </div>
+                    {maxValue && (
+                        <div className="dps-bar">
+                            <div 
+                                className="dps-fill" 
+                                style={{ 
+                                    width: `${Math.min(percentage, 100)}%`,
+                                    background: color 
+                                }}
+                            ></div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // 事件列表组件
+        function EventsList({ events, limit = 20 }) {
+            const limitedEvents = events.slice(0, limit);
+
+            const formatTimestamp = (timestamp) => {
+                const date = new Date(timestamp);
+                return date.toLocaleTimeString();
+            };
+
+            return (
+                <div className="events-panel">
+                    <h3>实时事件</h3>
+                    {limitedEvents.map((event, index) => (
+                        <div 
+                            key={index} 
+                            className={`event-item ${event.type === 'damage' ? 'event-damage' : 'event-heal'}`}
+                        >
+                            <div style={{ fontSize: '0.8em', opacity: 0.7 }}>
+                                {formatTimestamp(event.timestamp)}
+                            </div>
+                            {event.type === 'damage' && (
+                                <div>
+                                    <strong>{event.source_name}</strong> 对 <strong>{event.target_name}</strong> 
+                                    使用 <em>{event.action_name}</em> 造成 
+                                    <span style={{ color: '#f44336', fontWeight: 'bold' }}> {event.damage?.toLocaleString()} </span>
+                                    点伤害
+                                    {event.is_critical && <span style={{ color: '#ff9800' }}> [暴击]</span>}
+                                    {event.is_direct_hit && <span style={{ color: '#ff5722' }}> [直击]</span>}
+                                </div>
+                            )}
+                            {event.type === 'heal' && (
+                                <div>
+                                    <strong>{event.source_name}</strong> 对 <strong>{event.target_name}</strong> 
+                                    使用 <em>{event.action_name}</em> 治疗了 
+                                    <span style={{ color: '#4caf50', fontWeight: 'bold' }}> {event.heal_amount?.toLocaleString()} </span>
+                                    点生命值
+                                    {event.overheal_amount > 0 && (
+                                        <span style={{ color: '#ff9800' }}> (过量: {event.overheal_amount})</span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
+        // 主仪表板组件
+        function CombatDashboard() {
+            const { stats, events, isConnected, currentEncounter } = useLiveCombatData();
+            const [selectedView, setSelectedView] = useState('overview');
+
+            // 计算团队总DPS
+            const totalDPS = Object.values(stats).reduce((sum, playerStats) => {
+                return sum + (playerStats.dps || 0);
+            }, 0);
+
+            // 找出最高DPS用于计算百分比
+            const maxDPS = Math.max(...Object.values(stats).map(s => s.dps || 0));
+
+            // 测试数据注入函数
+            const injectTestData = async () => {
+                const testDamage = {
+                    source_id: 'test_player',
+                    source_name: '测试玩家',
+                    target_id: 'test_enemy',
+                    target_name: '训练木人',
+                    action_id: '8D',
+                    damage: Math.floor(Math.random() * 2000) + 800,
+                    is_critical: Math.random() < 0.25,
+                    is_direct_hit: Math.random() < 0.25
+                };
+
+                try {
+                    await fetch('/api/v1/inject/damage', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(testDamage)
+                    });
+                } catch (error) {
+                    console.error('注入测试数据失败:', error);
+                }
+            };
+
+            return (
+                <div className="dashboard">
+                    <div className="header">
+                        <h1>🗡️ FFXIV Combat Dashboard</h1>
+                        <div>
+                            <span className={`status-indicator ${isConnected ? 'status-connected' : 'status-disconnected'}`}></span>
+                            {isConnected ? '实时连接中' : '连接断开'}
+                        </div>
+                        {currentEncounter && (
+                            <div style={{ marginTop: '10px', opacity: 0.8 }}>
+                                当前战斗: {currentEncounter.zone_name} - {currentEncounter.boss_name}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="controls">
+                        <button 
+                            className={`btn ${selectedView === 'overview' ? 'active' : ''}`}
+                            onClick={() => setSelectedView('overview')}
+                        >
+                            总览
+                        </button>
+                        <button 
+                            className={`btn ${selectedView === 'events' ? 'active' : ''}`}
+                            onClick={() => setSelectedView('events')}
+                        >
+                            事件日志
+                        </button>
+                        <button className="btn" onClick={injectTestData}>
+                            测试数据
+                        </button>
+                    </div>
+
+                    {selectedView === 'overview' && (
+                        <>
+                            <div className="stats-grid">
+                                <StatCard 
+                                    title="团队总DPS" 
+                                    value={Math.round(totalDPS)} 
+                                    unit="DPS"
+                                    color="#4fc3f7"
+                                />
+                                <StatCard 
+                                    title="活跃玩家" 
+                                    value={Object.keys(stats).length} 
+                                    unit="人"
+                                    color="#4caf50"
+                                />
+                                <StatCard 
+                                    title="总事件数" 
+                                    value={events.length} 
+                                    color="#ff9800"
+                                />
+                                <StatCard 
+                                    title="连接状态" 
+                                    value={isConnected ? "在线" : "离线"} 
+                                    color={isConnected ? "#4caf50" : "#f44336"}
+                                />
+                            </div>
+
+                            <div className="stats-grid">
+                                {Object.entries(stats).map(([playerId, playerStats]) => (
+                                    <StatCard
+                                        key={playerId}
+                                        title={playerId}
+                                        value={Math.round(playerStats.dps || 0)}
+                                        unit="DPS"
+                                        color="#29b6f6"
+                                        maxValue={maxDPS}
+                                    />
+                                ))}
+                            </div>
+                        </>
+                    )}
+
+                    {selectedView === 'events' && (
+                        <EventsList events={events} limit={50} />
+                    )}
+                </div>
+            );
+        }
+
+        // 渲染应用
+        ReactDOM.render(<CombatDashboard />, document.getElementById('root'));
+    </script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        cd api_design
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Validate JSON files
+      run: |
+        cd api_design
+        python validate_json.py
+    
+    - name: Run API tests
+      run: |
+        cd api_design
+        python test_api.py
+    
+    - name: Test API startup
+      run: |
+        cd api_design
+        timeout 30 python main.py &
+        sleep 10
+        curl -f http://localhost:8000/health || exit 1
+        curl -f http://localhost:8000/api/v1/status || exit 1
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black
+    
+    - name: Run flake8
+      run: |
+        flake8 api_design --count --select=E9,F63,F7,F82 --show-source --statistics
+    
+    - name: Check code formatting with black
+      run: |
+        black --check api_design
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run security scan
+      uses: pypa/gh-action-pip-audit@v1.0.8
+      with:
+        inputs: api_design/requirements.txt

@@ -1,0 +1,5 @@
+# Sample override file
+# Format: old_name|new_name
+
+_rsv_33407_-1_1_0_0_SE2DC5B04_EE2DC5B04|Steel Web Sample
+_rsv_33441_-1_1_0_0_SE2DC5B04_EE2DC5B04|Daemon Bonds Sample
